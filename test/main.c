@@ -290,7 +290,7 @@ int main(int argc, char *argv[])
         ret = poll_cq(cq, &wr_id);
         if (ret == 1)
         {
-            printf(">> Got wait-on-data CQE on value %" PRIu64 "\n", wr_id);
+            printf("*********** Got wait-on-data CQE on value %" PRIu64 "***********\n", wr_id);
         }
         else if (ret != 0)
         {
