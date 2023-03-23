@@ -9,11 +9,12 @@ target_link_libraries(${PROJECT_NAME} ibverbs)
 target_link_libraries(${PROJECT_NAME} mlx5)
 
 if(BUILD_TEST)
-   add_executable(${PROJECT_NAME}_test ${CMAKE_CURRENT_SOURCE_DIR}/test/main.c)
-   target_include_directories(${PROJECT_NAME}_test PUBLIC 
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/../device-memory-functions/include)
-   target_link_libraries(${PROJECT_NAME}_test 
-        ${PROJECT_NAME} 
-        ${CMAKE_CURRENT_SOURCE_DIR}/../device-memory-functions/build/libdevice_memory_functions.a)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/test/external_libs/device_memory_functions)
+    add_executable(${PROJECT_NAME}_test ${CMAKE_CURRENT_SOURCE_DIR}/test/main.c)
+    target_include_directories(${PROJECT_NAME}_test PUBLIC 
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/external_libs/device_memory_functions/include)
+    target_link_libraries(${PROJECT_NAME}_test 
+            ${PROJECT_NAME} 
+            ${CMAKE_CURRENT_SOURCE_DIR}/build/test/external_libs/device_memory_functions/libdevice_memory_functions.a)
 endif()
