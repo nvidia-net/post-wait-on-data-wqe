@@ -120,20 +120,24 @@ int poll_cq(struct ibv_cq *cq, uint64_t *wr_id)
 
 int print_usage(const char *prog)
 {
-    printf("\n%s [-d device_name] [-i DM_INIT_VALUE]\n", prog);
-    printf("    DM_INIT_VALUE       >=0\n\n");
+    printf("\n%s [-d device_name] [-i DM_INIT_VALUE] [-r INTERATIVE_TEST]\n", prog);
+    printf("    DM_INIT_VALUE   >=0\n");
+    printf("    INTERATIVE_TEST ={1,0}\n\n");
     return 0;
 }
 
-int process_args(int argc, char *argv[], unsigned long *dm_init_value, char** device_name)
+int process_args(int argc, char *argv[], unsigned long *dm_init_value, char** device_name, int* run_interactive_test)
 {
     int c;
     char* stopstring;
     
-    while ((c = getopt(argc, argv, ":i:d:")) != -1)
+    while ((c = getopt(argc, argv, ":i:d:r:")) != -1)
     {
         switch (c)
         {
+        case 'r':
+			*run_interactive_test = atoi(optarg);
+			break;
         case 'd':
 			*device_name = strdup(optarg);
 			break;
@@ -191,13 +195,14 @@ int main(int argc, char *argv[])
     struct ibv_qp *qp;
     struct ibv_qp_ex *qpex;
     struct mlx5dv_qp_ex *mqpex;
-    uint64_t value, mask;
+    uint64_t value = 0, mask = 0xffff;
+    int run_interactive_test = 1;
     int op = 1;
     int ret = 0;
     uint64_t wr_id;
-    char* device_name = NULL;
+    char* device_name = "mlx5_0";
 
-    if (process_args(argc, argv, &value, &device_name) != 0)
+    if (process_args(argc, argv, &value, &device_name, &run_interactive_test) != 0)
         return 1;
 
     if (open_device(&ctx, device_name) != 0)
@@ -217,7 +222,7 @@ int main(int argc, char *argv[])
     if (init_qp(ctx, pd, cq, ib_port, &qp, &qpex, &mqpex) != 0)
         return 1;
 
-    value = 0;
+    value = be64toh(value);
     if (alloc_dm(   ctx, 
                     &dm, 
                     sizeof(value), 
@@ -228,75 +233,107 @@ int main(int argc, char *argv[])
                     NULL /*bar_addr*/, 
                     0 /*bar_op*/) != 0)
         return 1;
+    value = htobe64(value);
 
-    while (op != 0)
+    if(run_interactive_test)
     {
-        uint64_t curr_value;
-        if (ibv_memcpy_from_dm(&curr_value, dm, 0 /*offset*/, sizeof(curr_value)) != 0)
+        while (op != 0)
         {
-            perror("ibv_memcpy_from_dm failed");
-        }
-
-        printf("\n> Operations:\n");
-        printf("    > For setting DM value in Decimal press:   \"1 <decimal_num>\"\n");
-        printf("    > For posting wait-on-data WQE press:      \"2 <decimal_value> <hex_mask>\"\n");
-        printf("    > For finishing the program press:         \"0\"\n");
-        printf("Current DM value: %" PRIu64 "\n\n", be64toh(curr_value));
-
-        scanf("%d", &op);
-
-        switch (op)
-        {
-        case 0:
-            break;
-        case 1:
-            scanf("%" SCNu64, &value);
-            break;
-        case 2:
-            scanf("%" SCNu64, &value);
-            scanf("%" SCNx64, &mask);
-            break;
-        }
-        if (op == 1)
-        {
-            value = be64toh(value);
-            if (ibv_memcpy_to_dm(dm, 0 /*offset*/, &value, sizeof(value)) != 0)
+            uint64_t curr_value;
+            if (ibv_memcpy_from_dm(&curr_value, dm, 0 /*offset*/, sizeof(curr_value)) != 0)
             {
-                perror("ibv_memcpy_to_dm failed");
-                return 1;
+                perror("ibv_memcpy_from_dm failed");
             }
-            value = htobe64(value);
-        }
-        if (op == 2)
-        {
-            if (post_wod_wqe(   qp, 
-                                qpex, 
-                                mqpex, 
-                                value, 
-                                dm_mr->lkey,
-                                (uintptr_t)dm_mr->addr,
-                                value,
-                                WOD_CQE_ALWAYS,
-                                1 /*verbosity_level*/,
-                                mask,
-                                WOD_RETRY, 
-                                WOD_NO_FENCE, 
-                                WOD_EQUAL, 
-                                1 /*send_doorbell*/) != 0)
-                return 1;
-        }
 
+            printf("\n> Operations:\n");
+            printf("    > For setting DM value in Decimal press:   \"1 <decimal_num>\"\n");
+            printf("    > For posting wait-on-data WQE press:      \"2 <decimal_value> <hex_mask>\"\n");
+            printf("    > For finishing the program press:         \"0\"\n");
+            printf("Current DM value: %" PRIu64 "\n\n", be64toh(curr_value));
+
+            scanf("%d", &op);
+
+            switch (op)
+            {
+            case 0:
+                break;
+            case 1:
+                scanf("%" SCNu64, &value);
+                break;
+            case 2:
+                scanf("%" SCNu64, &value);
+                scanf("%" SCNx64, &mask);
+                break;
+            }
+            if (op == 1)
+            {
+                value = be64toh(value);
+                if (ibv_memcpy_to_dm(dm, 0 /*offset*/, &value, sizeof(value)) != 0)
+                {
+                    perror("ibv_memcpy_to_dm failed");
+                    return 1;
+                }
+                value = htobe64(value);
+            }
+            if (op == 2)
+            {
+                if (post_wod_wqe(   qp, 
+                                    qpex, 
+                                    mqpex, 
+                                    value, 
+                                    dm_mr->lkey,
+                                    (uintptr_t)dm_mr->addr,
+                                    value,
+                                    WOD_CQE_ALWAYS,
+                                    1 /*verbosity_level*/,
+                                    mask,
+                                    WOD_RETRY, 
+                                    WOD_NO_FENCE, 
+                                    WOD_EQUAL, 
+                                    1 /*send_doorbell*/) != 0)
+                    return 1;
+            }
+
+            usleep(1000 * 500);
+            ret = poll_cq(cq, &wr_id);
+            if (ret == 1)
+            {
+                printf("*********** Got wait-on-data CQE on value %" PRIu64 "***********\n", wr_id);
+            }
+            else if (ret != 0)
+            {
+                printf("============ Error!!! ============\n");
+            }
+        }
+    }
+    else{
+        if (post_wod_wqe(   qp, 
+                            qpex, 
+                            mqpex, 
+                            value, 
+                            dm_mr->lkey,
+                            (uintptr_t)dm_mr->addr,
+                            value,
+                            WOD_CQE_ALWAYS,
+                            1 /*verbosity_level*/,
+                            mask,
+                            WOD_RETRY, 
+                            WOD_NO_FENCE, 
+                            WOD_EQUAL, 
+                            1 /*send_doorbell*/) != 0)
+                    return 1;
         usleep(1000 * 500);
         ret = poll_cq(cq, &wr_id);
         if (ret == 1)
         {
             printf("*********** Got wait-on-data CQE on value %" PRIu64 "***********\n", wr_id);
         }
-        else if (ret != 0)
+        else
         {
-            printf("============ Error!!! ============\n");
+            printf("============ Error!!! CQE not found ============\n");
         }
     }
+    
 
     if (dealloc_dm(dm, dm_mr) != 0)
         return 1;
