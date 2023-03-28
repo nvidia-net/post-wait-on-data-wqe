@@ -222,18 +222,20 @@ int main(int argc, char *argv[])
     if (init_qp(ctx, pd, cq, ib_port, &qp, &qpex, &mqpex) != 0)
         return 1;
 
-    value = be64toh(value);
+    // In CX-7 we have a HW BUG in which the HW upon execution of a WOD WQE polls the memory
+    // and assumes it is written always in Big Endian.
+    // Therefore, as a workaround we write the value in MEMIC in Big Endian in the first place
+    uint64_t value_be = htobe64(value);
     if (alloc_dm(   ctx, 
                     &dm, 
-                    sizeof(value), 
-                    &value, 
+                    sizeof(value_be), 
+                    &value_be, 
                     pd, 
                     &dm_mr,
                     IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC | IBV_ACCESS_ZERO_BASED,
                     NULL /*bar_addr*/, 
                     0 /*bar_op*/) != 0)
         return 1;
-    value = htobe64(value);
 
     if(run_interactive_test)
     {
@@ -249,6 +251,9 @@ int main(int argc, char *argv[])
             printf("    > For setting DM value in Decimal press:   \"1 <decimal_num>\"\n");
             printf("    > For posting wait-on-data WQE press:      \"2 <decimal_value> <hex_mask>\"\n");
             printf("    > For finishing the program press:         \"0\"\n");
+            // Since in CX-7 we have the BUG described above, we read the value from DM and got it
+            // in the endianness we wrote it in the first place i.e., big endian.
+            // Therefore, for the print we convert it to host endian
             printf("Current DM value: %" PRIu64 "\n\n", be64toh(curr_value));
 
             scanf("%d", &op);
@@ -267,13 +272,14 @@ int main(int argc, char *argv[])
             }
             if (op == 1)
             {
-                value = be64toh(value);
-                if (ibv_memcpy_to_dm(dm, 0 /*offset*/, &value, sizeof(value)) != 0)
+                // Same as in the non-interactive case. We need to write to DM in Big Endian to workaround the
+                // HW bug in CX-7.
+                value_be = htobe64(value);
+                if (ibv_memcpy_to_dm(dm, 0 /*offset*/, &value_be, sizeof(value_be)) != 0)
                 {
                     perror("ibv_memcpy_to_dm failed");
                     return 1;
                 }
-                value = htobe64(value);
             }
             if (op == 2)
             {
@@ -283,7 +289,7 @@ int main(int argc, char *argv[])
                                     value, 
                                     dm_mr->lkey,
                                     (uintptr_t)dm_mr->addr,
-                                    value,
+                                    value /*wr_id*/,
                                     WOD_CQE_ALWAYS,
                                     1 /*verbosity_level*/,
                                     mask,
@@ -313,7 +319,7 @@ int main(int argc, char *argv[])
                             value, 
                             dm_mr->lkey,
                             (uintptr_t)dm_mr->addr,
-                            value,
+                            value /*wr_id*/,
                             WOD_CQE_ALWAYS,
                             1 /*verbosity_level*/,
                             mask,
